@@ -323,6 +323,19 @@ select optgroup {
   background-color: var(--bg);
   color: var(--ink);
 }
+/* WebKit (DuckDuckGo, Safari) keeps the native rounded popup button and
+   ignores border-radius until appearance is none. Chrome already follows it. */
+select,
+select.control {
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 2.25rem;
+  background-color: var(--bg);
+  background-image: var(--select-arrow);
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1rem 1rem;
+}
 input::placeholder,
 textarea::placeholder {
   color: var(--faint, var(--muted));

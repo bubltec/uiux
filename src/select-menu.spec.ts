@@ -18,4 +18,12 @@ describe('native select menus', () => {
       /select option,\s*select optgroup \{\s*background-color: var\(--bg\);\s*color: var\(--ink\);/,
     );
   });
+
+  it('drops the native WebKit button so the radius and caret match Chrome', () => {
+    const css = read('./theme.css');
+    expect(css).toMatch(/select,\s*select\.control \{\s*-webkit-appearance: none;\s*appearance: none;/);
+    expect(css).toContain('background-image: var(--select-arrow);');
+    expect(read('./themes/nes.css')).toContain('--select-arrow:');
+    expect(read('./themes/paw.css')).toContain('--select-arrow:');
+  });
 });
