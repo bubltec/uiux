@@ -1,0 +1,8 @@
+saveExact: true
+engineStrict: true
+supportedArchitectures:
+  os:
+    - current
+  cpu:
+    - arm64
+    - x64

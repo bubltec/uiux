@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - '!src/**/*.md'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig.json'
+      - 'vitest.config.ts'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Version bump for a release from current main'
+        required: true
+        default: minor
+        type: choice
+        options:
+          - major
+          - minor
+          - patch
+          - next
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: filter
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" \
+            | grep -qvE '\.(md|mdc)$|^\.cursor/|^LICENSE$'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  check:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck && pnpm run lint && pnpm run build && pnpm run test
+
+  # package.json version stays 0.0.0. The real version comes from git tags.
+  # First publish of a new package name has to be done by hand (npm publish
+  # --access public) so npm can register this workflow as a trusted publisher
+  # for bubltec/uiux, workflow ci.yml. Later pushes to main publish with OIDC.
+  publish:
+    needs: check
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - name: Determine version
+        id: version
+        run: |
+          LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          LATEST_TAG=${LATEST_TAG:-v0.0.0}
+          LATEST=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST"
+
+          SUBJECT=$(git log -1 --format=%s)
+          MSG=$(git log -1 --format=%B)
+
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            BUMP=${{ inputs.bump }}
+          elif echo "$MSG" | grep -qw '#major'; then
+            BUMP=major
+          elif echo "$MSG" | grep -qw '#minor'; then
+            BUMP=minor
+          elif echo "$MSG" | grep -qw '#patch'; then
+            BUMP=patch
+          elif echo "$MSG" | grep -qw '#next'; then
+            BUMP=none
+          elif echo "$SUBJECT" | grep -qE '^feat(\([^)]+\))?!:'; then
+            BUMP=major
+          elif echo "$SUBJECT" | grep -qE '^feat(\([^)]+\))?:'; then
+            BUMP=minor
+          elif echo "$SUBJECT" | grep -qE '^fix(\([^)]+\))?:'; then
+            BUMP=patch
+          else
+            BUMP=patch
+          fi
+
+          if [ "$BUMP" = next ]; then
+            BUMP=none
+          fi
+
+          if [ "$BUMP" = major ]; then
+            NEW_VERSION="$((MAJOR + 1)).0.0"; TAG=latest
+          elif [ "$BUMP" = minor ]; then
+            NEW_VERSION="$MAJOR.$((MINOR + 1)).0"; TAG=latest
+          elif [ "$BUMP" = patch ]; then
+            NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))"; TAG=latest
+          else
+            NEW_VERSION="$MAJOR.$MINOR.$((PATCH + 1))-next.${{ github.run_number }}"; TAG=next
+          fi
+
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+      - run: npm pkg set version="${{ steps.version.outputs.version }}"
+      - run: pnpm publish --tag ${{ steps.version.outputs.tag }} --no-git-checks
+      - name: Tag + GitHub Release (real releases only)
+        if: steps.version.outputs.bump != 'none'
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+          gh release create "v${{ steps.version.outputs.version }}" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

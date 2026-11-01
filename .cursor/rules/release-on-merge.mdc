@@ -1,0 +1,13 @@
+---
+description: Merging to main publishes @bubltec/uiux to npm
+alwaysApply: true
+---
+
+# Merging to `main` publishes to npm
+
+Every relevant push to `main` publishes `@bubltec/uiux`. A published version cannot be reused.
+
+- `version` in `package.json` stays `0.0.0`. CI computes the version from git tags.
+- Bump order: workflow input, then `#major` / `#minor` / `#patch` / `#next` in the commit message, then `feat!:` / `feat:` / `fix:`, otherwise patch.
+- Put the marker in the PR title. That becomes the squash-merge subject.
+- Never push to `main` or merge without an explicit go-ahead. The first publish of this package name must be done by hand (`npm publish --access public`) so npm can register GitHub Actions on `bubltec/uiux`, workflow `ci.yml`, as a trusted publisher. After that, CI publishes with OIDC and no token.
